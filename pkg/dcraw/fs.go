@@ -1,10 +1,76 @@
 package dcraw
 
 import (
+	expsys "github.com/tetratelabs/wazero/experimental/sys"
+	"github.com/tetratelabs/wazero/sys"
 	"io"
 	"io/fs"
+	"os"
 	"time"
 )
+
+type singletonFS struct {
+	expsys.UnimplementedFS
+	f *os.File
+}
+
+func (f *singletonFS) OpenFile(name string, flag expsys.Oflag, perm fs.FileMode) (expsys.File, expsys.Errno) {
+	if name == "." {
+		return &singletonDir{f: f.f}, 0
+	}
+	if name == readerFSname {
+		_, err := f.f.Seek(0, io.SeekStart)
+		if err != nil {
+			return nil, expsys.UnwrapOSError(err)
+		}
+		return &singletonFile{f: f.f}, 0
+	}
+	return nil, expsys.EINVAL
+}
+
+type singletonDir struct {
+	expsys.UnimplementedFile
+	f *os.File
+}
+
+func (d *singletonDir) IsDir() (bool, expsys.Errno) {
+	return true, 0
+}
+
+func (d singletonDir) Stat() (sys.Stat_t, expsys.Errno) {
+	stat, _ := d.f.Stat()
+	return sys.NewStat_t(stat), 0
+}
+
+type singletonFile struct {
+	expsys.UnimplementedFile
+	f *os.File
+}
+
+func (f *singletonFile) Stat() (sys.Stat_t, expsys.Errno) {
+	t, err := f.f.Stat()
+	if err != nil {
+		return sys.Stat_t{}, expsys.UnwrapOSError(err)
+	}
+	return sys.NewStat_t(t), 0
+}
+
+func (f *singletonFile) Read(buf []byte) (n int, errno expsys.Errno) {
+	n, err := f.f.Read(buf)
+	if err != nil {
+		return -1, expsys.UnwrapOSError(err)
+	}
+	return n, 0
+}
+
+func (f *singletonFile) Seek(offset int64, whence int) (newOffset int64, errno expsys.Errno) {
+	n, err := f.f.Seek(offset, whence)
+	if err != nil {
+		return -1, expsys.UnwrapOSError(err)
+	}
+	return n, 0
+
+}
 
 // These implement an [fs.FS] with a single root directory,
 // and a single file in that directory, named [readerFSname],

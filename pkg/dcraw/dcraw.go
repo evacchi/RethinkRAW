@@ -18,10 +18,12 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"github.com/tetratelabs/wazero/experimental"
+	"github.com/tetratelabs/wazero/experimental/logging"
+	"github.com/tetratelabs/wazero/experimental/sysfs"
 	"image"
 	"image/jpeg"
 	"io"
-	"io/fs"
 	"os"
 	"regexp"
 	"strconv"
@@ -75,7 +77,7 @@ func compile() {
 	thumbRegex = regexp.MustCompile(`Thumb size: +(\d+) x (\d+)`)
 }
 
-func run(ctx context.Context, root fs.FS, args ...string) ([]byte, error) {
+func run(ctx context.Context, root readerFS, args ...string) ([]byte, error) {
 	once.Do(compile)
 
 	err := sem.Acquire(ctx, 1)
@@ -86,7 +88,13 @@ func run(ctx context.Context, root fs.FS, args ...string) ([]byte, error) {
 
 	var buf bytes.Buffer
 	cfg := wazero.NewModuleConfig().
-		WithArgs(args...).WithStdout(&buf).WithFS(root)
+		WithArgs(args...).WithStdout(&buf).
+		WithFSConfig(wazero.NewFSConfig().(sysfs.FSConfig).
+			WithSysFSMount(&singletonFS{f: root.r.(*os.File)}, "."))
+
+	ctx = context.WithValue(ctx, experimental.FunctionListenerFactoryKey{},
+		logging.NewHostLoggingListenerFactory(os.Stdout, logging.LogScopeAll))
+
 	module, err := wasm.InstantiateModule(ctx, module, cfg)
 	if err != nil {
 		return nil, err
